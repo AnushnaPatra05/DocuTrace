@@ -1,0 +1,14 @@
+{
+  "name": "docutrace",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/client",
+    "apps/server"
+  ],
+  "scripts": {
+    "dev:client": "npm run dev --workspace=apps/client",
+    "dev:server": "npm run dev --workspace=apps/server",
+    "dev": "npm run dev:client & npm run dev:server"
+  }
+}
