@@ -24,6 +24,11 @@ app.get('/health', (req, res) => {
   })
 })
 
+import authRoutes from './routes/auth.routes'
+
+// add after the health check route:
+app.use('/api/auth', authRoutes)
+
 // ── 404 + Error Handlers ─────────────────────────────
 app.use(notFound)
 app.use(errorHandler)
