@@ -1,13 +1,260 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
-  provider = "prisma-client"
+  provider = "prisma-client-js"
   output   = "../src/generated/prisma"
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+// ──────────────────────────────────────────────────────
+// ENUMS
+// ──────────────────────────────────────────────────────
+
+enum UserRole {
+  USER
+  ADMIN
+}
+
+enum DocumentStatus {
+  DRAFT
+  PENDING
+  SIGNED
+  REJECTED
+  ARCHIVED
+}
+
+enum StorageBackend {
+  LOCAL
+  S3
+}
+
+enum RequestStatus {
+  PENDING
+  VIEWED
+  SIGNED
+  REJECTED
+  EXPIRED
+}
+
+enum SigType {
+  DRAWN
+  TYPED
+  IMAGE
+  INITIALS
+}
+
+enum AuditAction {
+  DOCUMENT_UPLOADED
+  DOCUMENT_VIEWED
+  DOCUMENT_DELETED
+  DOCUMENT_ARCHIVED
+  DOCUMENT_SIGNED
+  DOCUMENT_REJECTED
+  LINK_CREATED
+  LINK_OPENED
+  LINK_REVOKED
+  SIGNATURE_PLACED
+  USER_LOGIN
+  USER_LOGOUT
+  TOKEN_REFRESHED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+}
+
+// ──────────────────────────────────────────────────────
+// MODELS
+// ──────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email         String    @unique @db.VarChar(320)
+  passwordHash  String    @db.VarChar(72) @map("password_hash")
+  fullName      String    @db.VarChar(200) @map("full_name")
+  role          UserRole  @default(USER)
+  isActive      Boolean   @default(true) @map("is_active")
+  emailVerified Boolean   @default(false) @map("email_verified")
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  documents      Document[]
+  refreshTokens  RefreshToken[]
+  passwordResets PasswordResetToken[]
+  signingLinks   SigningLink[]      @relation("LinkCreator")
+  auditLogs      AuditLog[]
+  analytics      DocumentAnalytics?
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @db.Uuid @map("user_id")
+  tokenHash String    @unique @db.VarChar(64) @map("token_hash")
+  expiresAt DateTime  @db.Timestamptz @map("expires_at")
+  revokedAt DateTime? @db.Timestamptz @map("revoked_at")
+  userAgent String?   @db.VarChar(500) @map("user_agent")
+  ipAddress String?   @db.VarChar(45) @map("ip_address")
+  createdAt DateTime  @default(now()) @db.Timestamptz @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([tokenHash])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @db.Uuid @map("user_id")
+  tokenHash String    @unique @db.VarChar(64) @map("token_hash")
+  expiresAt DateTime  @db.Timestamptz @map("expires_at")
+  usedAt    DateTime? @db.Timestamptz @map("used_at")
+  createdAt DateTime  @default(now()) @db.Timestamptz @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("password_reset_tokens")
+}
+
+model Document {
+  id             String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId        String         @db.Uuid @map("owner_id")
+  title          String         @db.VarChar(500)
+  fileKey        String         @unique @db.VarChar(1000) @map("file_key")
+  fileSize       BigInt         @map("file_size")
+  mimeType       String         @default("application/pdf") @db.VarChar(100) @map("mime_type")
+  pageCount      Int?           @map("page_count")
+  status         DocumentStatus @default(DRAFT)
+  storageBackend StorageBackend @default(LOCAL) @map("storage_backend")
+  checksum       String?        @db.VarChar(64)
+  deletedAt      DateTime?      @db.Timestamptz @map("deleted_at")
+  createdAt      DateTime       @default(now()) @db.Timestamptz @map("created_at")
+  updatedAt      DateTime       @updatedAt @db.Timestamptz @map("updated_at")
+
+  owner             User               @relation(fields: [ownerId], references: [id], onDelete: Restrict)
+  signingLinks      SigningLink[]
+  signatureRequests SignatureRequest[]
+  signatures        Signature[]
+  auditLogs         AuditLog[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@index([ownerId, status])
+  @@index([deletedAt])
+  @@index([createdAt])
+  @@map("documents")
+}
+
+model SigningLink {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId  String    @db.Uuid @map("document_id")
+  createdBy   String    @db.Uuid @map("created_by")
+  token       String    @unique @db.VarChar(128)
+  signerEmail String?   @db.VarChar(320) @map("signer_email")
+  signerName  String?   @db.VarChar(200) @map("signer_name")
+  expiresAt   DateTime? @db.Timestamptz @map("expires_at")
+  isActive    Boolean   @default(true) @map("is_active")
+  maxUses     Int?      @map("max_uses")
+  useCount    Int       @default(0) @map("use_count")
+  message     String?   @db.Text
+  createdAt   DateTime  @default(now()) @db.Timestamptz @map("created_at")
+
+  document          Document          @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  creator           User              @relation("LinkCreator", fields: [createdBy], references: [id])
+  signatureRequests SignatureRequest[]
+
+  @@index([token])
+  @@index([documentId])
+  @@index([expiresAt])
+  @@map("signing_links")
+}
+
+model SignatureRequest {
+  id              String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  documentId      String        @db.Uuid @map("document_id")
+  signingLinkId   String        @db.Uuid @map("signing_link_id")
+  signerEmail     String        @db.VarChar(320) @map("signer_email")
+  signerName      String?       @db.VarChar(200) @map("signer_name")
+  status          RequestStatus @default(PENDING)
+  ipAddress       String?       @db.VarChar(45) @map("ip_address")
+  userAgent       String?       @db.VarChar(500) @map("user_agent")
+  rejectionReason String?       @db.Text @map("rejection_reason")
+  viewedAt        DateTime?     @db.Timestamptz @map("viewed_at")
+  completedAt     DateTime?     @db.Timestamptz @map("completed_at")
+  createdAt       DateTime      @default(now()) @db.Timestamptz @map("created_at")
+
+  document    Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  signingLink SigningLink  @relation(fields: [signingLinkId], references: [id])
+  signatures  Signature[]
+
+  @@index([documentId])
+  @@index([signingLinkId])
+  @@index([signerEmail])
+  @@index([status])
+  @@map("signature_requests")
+}
+
+model Signature {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestId   String   @db.Uuid @map("request_id")
+  documentId  String   @db.Uuid @map("document_id")
+  pageNumber  Int      @map("page_number")
+  posX        Decimal  @db.Decimal(10, 4) @map("pos_x")
+  posY        Decimal  @db.Decimal(10, 4) @map("pos_y")
+  width       Decimal  @db.Decimal(10, 4)
+  height      Decimal  @db.Decimal(10, 4)
+  sigType     SigType  @default(DRAWN) @map("sig_type")
+  sigData     String?  @db.Text @map("sig_data")
+  sigImageKey String?  @db.VarChar(1000) @map("sig_image_key")
+  placedAt    DateTime @default(now()) @db.Timestamptz @map("placed_at")
+
+  request  SignatureRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  document Document        @relation(fields: [documentId], references: [id])
+
+  @@index([requestId])
+  @@index([documentId])
+  @@map("signatures")
+}
+
+model AuditLog {
+  id             BigInt      @id @default(autoincrement())
+  userId         String?     @db.Uuid @map("user_id")
+  documentId     String?     @db.Uuid @map("document_id")
+  action         AuditAction
+  actorEmail     String      @db.VarChar(320) @map("actor_email")
+  actorIp        String?     @db.VarChar(45) @map("actor_ip")
+  actorUserAgent String?     @db.VarChar(500) @map("actor_user_agent")
+  metadata       Json        @default("{}")
+  createdAt      DateTime    @default(now()) @db.Timestamptz @map("created_at")
+
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([documentId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([documentId, createdAt])
+  @@index([userId, createdAt])
+  @@map("audit_logs")
+}
+
+model DocumentAnalytics {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  ownerId        String   @unique @db.Uuid @map("owner_id")
+  totalDocuments Int      @default(0) @map("total_documents")
+  pendingCount   Int      @default(0) @map("pending_count")
+  signedCount    Int      @default(0) @map("signed_count")
+  rejectedCount  Int      @default(0) @map("rejected_count")
+  archivedCount  Int      @default(0) @map("archived_count")
+  lastUpdated    DateTime @default(now()) @db.Timestamptz @map("last_updated")
+
+  owner User @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@map("document_analytics")
 }
