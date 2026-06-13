@@ -6,6 +6,8 @@ import { env } from './config/env'
 import { notFound } from './middleware/notFound'
 import { errorHandler } from './middleware/errorHandler'
 import authRoutes from './routes/auth.routes'   // ← move here
+import { authenticate } from './middleware/authenticate'
+
 
 const app = express()
 
@@ -17,6 +19,10 @@ app.use(express.urlencoded({ extended: true }))
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', app: 'DocuTrace API', timestamp: new Date().toISOString() })
+})
+// Protected test route
+app.get('/api/me', authenticate, (req, res) => {
+  res.json({ status: 'success', data: req.user })
 })
 
 app.use('/api/auth', authRoutes)
